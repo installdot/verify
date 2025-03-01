@@ -1,9 +1,11 @@
 from flask import Flask, request, jsonify, render_template_string
 import json
 import os
+import requests
 
 app = Flask(__name__)
 DATA_FILE = "keys.json"
+GITHUB_KEYS_URL = "https://raw.githubusercontent.com/installdot/verify/refs/heads/main/keys.txt"
 
 # Load existing key-UUID mappings
 def load_data():
@@ -92,6 +94,7 @@ def remove_key(key):
     else:
         return jsonify({"status": "error", "message": "Key not found"}), 404
 
+# Verify and save key-UUID pair to the API
 @app.route("/verify", methods=["POST"])
 def verify_key():
     data = request.get_json()
@@ -101,16 +104,31 @@ def verify_key():
     if not uuid or not key:
         return jsonify({"status": "error", "message": "Missing UUID or key"}), 400
 
+    # Fetch keys from GitHub
+    response = requests.get(GITHUB_KEYS_URL)
+    if response.status_code != 200:
+        return jsonify({"status": "error", "message": "Failed to fetch keys from GitHub"}), 500
+
+    # Get the list of keys from the GitHub page
+    github_keys = response.text.strip().split("\n")
+    
+    # Load the existing keys from the local storage
     keys_db = load_data()
 
-    if key in keys_db:
-        if keys_db[key] != uuid:
-            return jsonify({"status": "error", "message": "Key already used with a different UUID"}), 403
-    else:
-        keys_db[key] = uuid
-        save_data(keys_db)
+    # Check if the key is in the GitHub list
+    if key in github_keys:
+        # If the key exists in keys_db and UUID doesn't match, reject
+        if key in keys_db:
+            if keys_db[key] != uuid:
+                return jsonify({"status": "error", "message": "Key already used with a different UUID"}), 403
+        else:
+            # If the key does not exist in the database, add it
+            keys_db[key] = uuid
+            save_data(keys_db)
 
-    return jsonify({"status": "success", "message": "Key verified"})
+        return jsonify({"status": "success", "message": "Key verified"})
+    else:
+        return jsonify({"status": "error", "message": "Key not found on GitHub"}), 404
 
 if __name__ == "__main__":
     # Render and many other platforms use the PORT environment variable.
